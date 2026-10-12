@@ -80,19 +80,28 @@ function Editor({ page }: { page: Page }) {
   const [title, setTitle] = useState(page.title);
   const [content, setContent] = useState(page.content);
   const [dirty, setDirty] = useState(false);
+  const [saveError, setSaveError] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const saveSeq = useRef(0);
   const draft = useRef({ title, content });
   draft.current = { title, content };
 
-  // Save ~1s after the user stops typing.
+  // Save ~1s after the user stops typing; "저장됨" only once the DB write of
+  // the latest draft has finished.
   const schedule = () => {
     setDirty(true);
     clearTimeout(timer.current);
     timer.current = setTimeout(() => {
       timer.current = undefined;
-      updatePage(page.id, draft.current);
-      setDirty(false);
+      const seq = ++saveSeq.current;
+      void updatePage(page.id, draft.current).then(({ error }) => {
+        if (seq !== saveSeq.current || timer.current) return; // a newer edit is on its way
+        setSaveError(!!error);
+        setDirty(false);
+      });
     }, AUTOSAVE_MS);
   };
 
@@ -101,7 +110,7 @@ function Editor({ page }: { page: Page }) {
     () => () => {
       if (timer.current) {
         clearTimeout(timer.current);
-        updatePage(page.id, draft.current);
+        void updatePage(page.id, draft.current);
       }
     },
     [page.id],
@@ -109,16 +118,29 @@ function Editor({ page }: { page: Page }) {
 
   useEffect(() => {
     if (!confirming) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setConfirming(false);
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && closeConfirm();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [confirming]);
+  }, [confirming, deleting]);
 
-  const remove = () => {
+  const closeConfirm = () => {
+    if (deleting) return;
+    setConfirming(false);
+    setDeleteError(false);
+  };
+
+  const remove = async () => {
+    setDeleting(true);
+    setDeleteError(false);
+    const next = sortPages(pages).find((p) => p.id !== page.id);
+    const { error } = await deletePage(page.id);
+    if (error) {
+      setDeleting(false);
+      return setDeleteError(true);
+    }
+    // The page is gone; drop any pending autosave so the unmount flush is a no-op.
     clearTimeout(timer.current);
     timer.current = undefined;
-    const next = sortPages(pages).find((p) => p.id !== page.id);
-    deletePage(page.id);
     router.replace(next ? `/pages/${next.id}` : "/pages");
   };
 
@@ -129,8 +151,16 @@ function Editor({ page }: { page: Page }) {
       <div className="ws-top">
         <span style={{ color: "var(--fg-2)" }}>/pages/{page.id}</span>
         <span style={{ flex: 1 }} />
-        {dirty ? <Tag tone="outline">저장 중…</Tag> : <Tag tone="ink">■ 저장됨</Tag>}
-        {!dirty && <span style={{ color: "var(--fg-2)" }}>{savedTime(page.updatedAt)}</span>}
+        {dirty ? (
+          <Tag tone="outline">저장 중…</Tag>
+        ) : saveError ? (
+          <span className="me-err" role="alert">
+            저장하지 못했습니다. 계속 입력하면 다시 저장합니다.
+          </span>
+        ) : (
+          <Tag tone="ink">■ 저장됨</Tag>
+        )}
+        {!dirty && !saveError && <span style={{ color: "var(--fg-2)" }}>{savedTime(page.updatedAt)}</span>}
         <Button variant="window" size="sm" onClick={() => setConfirming(true)}>
           삭제
         </Button>
@@ -172,7 +202,7 @@ function Editor({ page }: { page: Page }) {
       </div>
 
       {confirming && (
-        <div className="scrim" onClick={() => setConfirming(false)}>
+        <div className="scrim" onClick={closeConfirm}>
           <div onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
             <Window title="글 삭제" width={400} padding={24}>
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -182,12 +212,17 @@ function Editor({ page }: { page: Page }) {
                 <p style={{ margin: 0, fontSize: 14, lineHeight: 1.4, color: "var(--fg-2)" }}>
                   지운 글은 되살릴 수 없습니다.
                 </p>
+                {deleteError && (
+                  <span className="me-err" role="alert">
+                    글을 지우지 못했습니다.
+                  </span>
+                )}
                 <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 6 }}>
-                  <Button variant="window" autoFocus onClick={() => setConfirming(false)}>
+                  <Button variant="window" autoFocus disabled={deleting} onClick={closeConfirm}>
                     취소
                   </Button>
-                  <Button variant="solid" onClick={remove}>
-                    삭제하기
+                  <Button variant="solid" disabled={deleting} onClick={() => void remove()}>
+                    {deleting ? "삭제 중…" : "삭제하기"}
                   </Button>
                 </div>
               </div>

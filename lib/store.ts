@@ -1,9 +1,9 @@
 "use client";
 
-// Auth is real Google sign-in through Supabase (F-01~04), and the profile
-// (nickname, image) lives in the Supabase profile table (F-05~06). Pages are
-// still local-first: persisted in localStorage, one key per account, so two
-// Google accounts on the same browser never see each other's pages.
+// Auth is real Google sign-in through Supabase (F-01~04), the profile
+// (nickname, image) lives in the Supabase profile table (F-05~06), and pages
+// live in the Supabase page table (F-07~11). RLS limits every page query to
+// the signed-in user's own rows. localStorage only caches the profile.
 // The pages only use the exported API.
 import type { Session } from "@supabase/supabase-js";
 import { useSyncExternalStore } from "react";
@@ -25,11 +25,12 @@ export type Page = {
   updatedAt: number;
 };
 
-type State = { ready: boolean; user: User | null; pages: Page[] };
-type Saved = { profile: Pick<User, "nickname" | "avatarUrl">; pages: Page[] };
+// pagesError: the page list could not be loaded from Supabase.
+type State = { ready: boolean; user: User | null; pages: Page[]; pagesError: boolean };
+type Saved = { profile: Pick<User, "nickname" | "avatarUrl"> };
 
 const KEY_PREFIX = "mini-notion:v2:";
-const SERVER_STATE: State = { ready: false, user: null, pages: [] };
+const SERVER_STATE: State = { ready: false, user: null, pages: [], pagesError: false };
 
 let state: State = SERVER_STATE;
 let started = false;
@@ -51,13 +52,10 @@ function emit() {
   listeners.forEach((l) => l());
 }
 
-function commit(next: Omit<State, "ready">) {
+function commit(next: Partial<Omit<State, "ready">>) {
   state = { ...state, ...next };
   if (next.user) {
-    const saved: Saved = {
-      profile: { nickname: next.user.nickname, avatarUrl: next.user.avatarUrl },
-      pages: next.pages,
-    };
+    const saved: Saved = { profile: { nickname: next.user.nickname, avatarUrl: next.user.avatarUrl } };
     try {
       localStorage.setItem(keyFor(next.user.id), JSON.stringify(saved));
     } catch {
@@ -90,28 +88,46 @@ async function ensureProfile(au: Session["user"]): Promise<ProfileRow | null> {
   return created;
 }
 
-// Builds the app user from a Supabase session. First login on this browser
-// seeds sample pages; nickname and image come from the profile row (name is
-// seeded with the Google display name on first login).
+type PageRow = { id: string; title: string; content: string; created_at: string };
+const PAGE_COLUMNS = "id, title, content, created_at";
+
+// The page table has no updated_at column, so the edit time is only known for
+// edits made in this session; loaded pages start from their creation time.
+function toPage(row: PageRow): Page {
+  const createdAt = Date.parse(row.created_at) || Date.now();
+  return { id: row.id, title: row.title, content: row.content, createdAt, updatedAt: createdAt };
+}
+
+async function loadPages(userId: string): Promise<Page[] | null> {
+  const { data, error } = await getSupabase()!
+    .from("page")
+    .select(PAGE_COLUMNS)
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false });
+  return error ? null : (data as PageRow[]).map(toPage);
+}
+
+// Builds the app user from a Supabase session. Nickname and image come from
+// the profile row (name is seeded with the Google display name on first
+// login); pages come from the page table.
 async function applySession(session: Session | null) {
   const seq = ++sessionSeq;
   if (!session) {
-    state = { ready: true, user: null, pages: [] };
+    state = { ready: true, user: null, pages: [], pagesError: false };
     return emit();
   }
   const au = session.user;
   if (state.ready && state.user?.id === au.id) {
-    if (state.user.email !== au.email) commit({ user: { ...state.user, email: au.email ?? "" }, pages: state.pages });
+    if (state.user.email !== au.email) commit({ user: { ...state.user, email: au.email ?? "" } });
     return;
   }
 
-  const profile = await ensureProfile(au);
+  const [profile, pages] = await Promise.all([ensureProfile(au), loadPages(au.id)]);
   if (seq !== sessionSeq) return; // a newer auth event already won
 
   const meta = au.user_metadata ?? {};
   const saved = readSaved(au.id);
   const googleName = displayNameOf(au);
-  const now = Date.now();
   state = { ...state, ready: true };
   commit({
     user: {
@@ -119,9 +135,10 @@ async function applySession(session: Session | null) {
       email: au.email ?? "",
       nickname: profile?.name || saved?.profile.nickname || googleName,
       avatarUrl: profile?.avatar_url || saved?.profile.avatarUrl || meta.avatar_url || meta.picture || null,
-      createdAt: Date.parse(au.created_at) || now,
+      createdAt: Date.parse(au.created_at) || Date.now(),
     },
-    pages: saved?.pages ?? seedPages(now),
+    pages: pages ?? [],
+    pagesError: !pages,
   });
 }
 
@@ -149,7 +166,7 @@ function subscribe(listener: () => void) {
     if (!state.user || e.key !== keyFor(state.user.id)) return;
     const saved = readSaved(state.user.id);
     if (!saved) return;
-    state = { ...state, user: { ...state.user, ...saved.profile }, pages: saved.pages };
+    state = { ...state, user: { ...state.user, ...saved.profile } };
     listener();
   };
   window.addEventListener("storage", onStorage);
@@ -161,24 +178,6 @@ function subscribe(listener: () => void) {
 
 export function useStore(): State {
   return useSyncExternalStore(subscribe, () => state, () => SERVER_STATE);
-}
-
-const uid = () => Math.random().toString(16).slice(2, 8);
-
-function seedPages(now: number): Page[] {
-  const min = 60_000;
-  const day = 86_400_000;
-  return [
-    {
-      title: "회의 메모",
-      content:
-        "9월 넷째 주 주간 회의\n\n- 구글 로그인 연결 완료, 배포 환경 확인\n- 자동 저장 간격은 1초로 유지\n- 다음 주: 마이 페이지 별명 변경부터 시작\n\n질문: 휴지통 기능이 정말 필요 없는지 2주 써 보고 결정",
-      ago: 5 * min,
-    },
-    { title: "할 일 목록", content: "- PRD 검토\n- 디자인 목업 확인\n- Next.js 프로젝트 만들기", ago: 3 * 60 * min },
-    { title: "아이디어", content: "/todo 명령어, 글 검색, 다크 모드", ago: day },
-    { title: "읽을거리", content: "", ago: 4 * day },
-  ].map(({ ago, ...p }) => ({ id: uid(), ...p, createdAt: now - ago, updatedAt: now - ago }));
 }
 
 // F-01: real Google sign-in. Leaves the app for Google, then Supabase sends the
@@ -216,7 +215,6 @@ async function saveProfile(patch: Partial<ProfileRow>): Promise<{ error: string 
   if (state.user?.id !== user.id) return { error: null }; // signed out meanwhile
   commit({
     user: { ...state.user, nickname: data.name || state.user.nickname, avatarUrl: data.avatar_url || state.user.avatarUrl },
-    pages: state.pages,
   });
   return { error: null };
 }
@@ -240,28 +238,65 @@ export async function saveAvatar(file: File): Promise<{ error: string | null }> 
   return saveProfile({ avatar_url: `${publicUrl}?v=${Date.now()}` });
 }
 
-// F-07
-export function createPage(): Page {
-  const s = state;
-  const now = Date.now();
-  const page: Page = { id: uid(), title: "", content: "", createdAt: now, updatedAt: now };
-  commit({ user: s.user, pages: [page, ...s.pages] });
-  return page;
+type Result<T = null> = { data: T | null; error: string | null };
+
+// Page writes run one after another, so a slow earlier autosave can never land
+// after (and overwrite) a newer one, and an edit never races its page's insert.
+let writes: Promise<unknown> = Promise.resolve();
+function queueWrite<T>(run: () => Promise<T>): Promise<T> {
+  const next = writes.then(run, run);
+  writes = next.catch(() => {});
+  return next;
 }
 
-// F-10
-export function updatePage(id: string, patch: Partial<Pick<Page, "title" | "content">>) {
-  const s = state;
-  commit({
-    user: s.user,
-    pages: s.pages.map((p) => (p.id === id ? { ...p, ...patch, updatedAt: Date.now() } : p)),
+// F-07: inserts an empty page owned by the signed-in user, then adds it to the list.
+export function createPage(): Promise<Result<Page>> {
+  return queueWrite(async () => {
+    const user = state.user;
+    const supabase = getSupabase();
+    if (!user || !supabase) return { data: null, error: "로그인 설정이 없습니다." };
+    const { data, error } = await supabase
+      .from("page")
+      .insert({ user_id: user.id, title: "", content: "" })
+      .select(PAGE_COLUMNS)
+      .single();
+    if (error || !data) return { data: null, error: error?.message ?? "page not created" };
+    const page = toPage(data as PageRow);
+    if (state.user?.id === user.id) commit({ pages: [page, ...state.pages] });
+    return { data: page, error: null };
   });
 }
 
-// F-11
-export function deletePage(id: string) {
-  const s = state;
-  commit({ user: s.user, pages: s.pages.filter((p) => p.id !== id) });
+// F-10: updates the list right away, then writes to the page table.
+export function updatePage(id: string, patch: Partial<Pick<Page, "title" | "content">>): Promise<Result> {
+  const user = state.user;
+  commit({ pages: state.pages.map((p) => (p.id === id ? { ...p, ...patch, updatedAt: Date.now() } : p)) });
+  return queueWrite(async () => {
+    const supabase = getSupabase();
+    if (!user || !supabase) return { data: null, error: "로그인 설정이 없습니다." };
+    const { data, error } = await supabase
+      .from("page")
+      .update(patch)
+      .eq("id", id)
+      .eq("user_id", user.id)
+      .select("id");
+    if (error) return { data: null, error: error.message };
+    return { data: null, error: data.length ? null : "page not found" };
+  });
+}
+
+// F-11: deletes the row first; the page leaves the list only once it is gone.
+export function deletePage(id: string): Promise<Result> {
+  return queueWrite(async () => {
+    const user = state.user;
+    const supabase = getSupabase();
+    if (!user || !supabase) return { data: null, error: "로그인 설정이 없습니다." };
+    const { data, error } = await supabase.from("page").delete().eq("id", id).eq("user_id", user.id).select("id");
+    if (error) return { data: null, error: error.message };
+    if (!data.length) return { data: null, error: "page not found" };
+    if (state.user?.id === user.id) commit({ pages: state.pages.filter((p) => p.id !== id) });
+    return { data: null, error: null };
+  });
 }
 
 // F-08: most recently edited first.

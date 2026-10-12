@@ -1,8 +1,13 @@
-import { render, screen } from "@testing-library/react";
+import { render, renderHook, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createFakeSupabase } from "@/lib/testing/fakeSupabase";
 
-// jsdom에는 Next.js 라우터가 없으므로 next/navigation만 모킹한다 (헌법 기술 스택 절).
+// jsdom에는 Next.js 라우터가 없으므로 next/navigation을 모킹한다 (헌법 기술 스택 절).
+// 글은 Supabase page 테이블에 저장되므로 getSupabase는 메모리 DB로 바꾼다.
+let mockDb = createFakeSupabase();
+vi.mock("@/lib/supabase", () => ({ getSupabase: () => mockDb.client }));
+
 let currentId = "";
 vi.mock("next/navigation", () => ({
   useParams: () => ({ id: currentId }),
@@ -18,15 +23,18 @@ vi.mock("next/navigation", () => ({
 
 beforeEach(() => {
   currentId = "";
+  mockDb = createFakeSupabase();
 });
 
-// store 모듈은 상태를 모듈 안에 캐시하므로 매번 새 모듈을 받아 실제 공개 API로 글을 준비한다.
+// store 모듈은 상태를 모듈 안에 캐시하므로 매번 새 모듈을 받아 로그인이 끝난 뒤 실제 공개 API로 글을 준비한다.
 async function renderPage(content: string) {
   vi.resetModules();
-  const { createPage, updatePage } = await import("@/lib/store");
-  const page = createPage();
-  updatePage(page.id, { content });
-  currentId = page.id;
+  const { createPage, updatePage, useStore } = await import("@/lib/store");
+  const { result } = renderHook(() => useStore());
+  await waitFor(() => expect(result.current.user).not.toBeNull());
+  const { data: page } = await createPage();
+  await updatePage(page!.id, { content });
+  currentId = page!.id;
   const { default: PageDetail } = await import("./page");
   return render(<PageDetail />);
 }

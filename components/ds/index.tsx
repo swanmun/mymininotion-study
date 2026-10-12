@@ -1,7 +1,13 @@
 // React ports of the Halftone Design System primitives used by the mockups
-// (Button, Tag, Input, Window). Styling lives in app/globals.css.
+// (Button, Tag, Input, Textarea, Window). Styling lives in app/globals.css.
 import Link from "next/link";
-import type { ButtonHTMLAttributes, CSSProperties, InputHTMLAttributes, ReactNode } from "react";
+import type {
+  ButtonHTMLAttributes,
+  CSSProperties,
+  InputHTMLAttributes,
+  ReactNode,
+  TextareaHTMLAttributes,
+} from "react";
 
 type ButtonVariant = "chip" | "solid" | "window";
 type Size = "sm" | "md" | "lg";
@@ -40,6 +46,18 @@ export function Input({ label, ...rest }: InputProps) {
     <label className="field">
       {label && <span className="field-label">{label}</span>}
       <input {...rest} />
+    </label>
+  );
+}
+
+type TextareaProps = TextareaHTMLAttributes<HTMLTextAreaElement> & { label?: string };
+
+// Multi-line sibling of Input: same label, bevel and focus ring.
+export function Textarea({ label, ...rest }: TextareaProps) {
+  return (
+    <label className="field">
+      {label && <span className="field-label">{label}</span>}
+      <textarea {...rest} />
     </label>
   );
 }

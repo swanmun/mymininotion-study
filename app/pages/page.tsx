@@ -6,7 +6,7 @@ import { sortPages, useStore } from "@/lib/store";
 
 // /pages — open the most recently edited page, or show the empty state.
 export default function PagesIndex() {
-  const { pages } = useStore();
+  const { pages, pagesError } = useStore();
   const router = useRouter();
   const latest = sortPages(pages)[0];
 
@@ -21,12 +21,19 @@ export default function PagesIndex() {
       <div className="ws-top">
         <span style={{ color: "var(--fg-2)" }}>/pages</span>
       </div>
-      <div className="ws-blank">
-        <h1>글이 없습니다</h1>
-        <p>
-          왼쪽 아래 입력창에 <kbd>/page</kbd>를 입력하고 Enter를 누르면 새 글이 만들어집니다.
-        </p>
-      </div>
+      {pagesError ? (
+        <div className="ws-blank">
+          <h1>글 목록을 불러오지 못했습니다</h1>
+          <p>네트워크 연결을 확인한 뒤 새로고침하면 다시 불러옵니다.</p>
+        </div>
+      ) : (
+        <div className="ws-blank">
+          <h1>글이 없습니다</h1>
+          <p>
+            왼쪽 아래 입력창에 <kbd>/page</kbd>를 입력하고 Enter를 누르면 새 글이 만들어집니다.
+          </p>
+        </div>
+      )}
     </>
   );
 }

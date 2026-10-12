@@ -1,0 +1,14 @@
+node_modules
+.next
+next-env.d.ts
+.env*.local
+
+# 빌드 캐시
+*.tsbuildinfo
+
+# 개인 Claude Code 설정
+.claude/settings.local.json
+
+# 앱에서 쓰지 않는 원본 자료 (폰트는 public/fonts에 있음)
+PretendardVariable.woff2.zip
+이미지.jpg

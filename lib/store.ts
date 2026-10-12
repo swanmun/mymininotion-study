@@ -1,7 +1,7 @@
 "use client";
 
 // Auth is real Google sign-in through Supabase (F-01~04), and the profile
-// (nickname, image) lives in the Supabase profile table (F-05~06). Pages are
+// (nickname, image, introduction) lives in the Supabase profile table (F-05~06). Pages are
 // still local-first: persisted in localStorage, one key per account, so two
 // Google accounts on the same browser never see each other's pages.
 // The pages only use the exported API.
@@ -14,6 +14,8 @@ export type User = {
   email: string;
   nickname: string;
   avatarUrl: string | null;
+  /** Self-introduction; "" when not set. */
+  intro: string;
   createdAt: number;
 };
 
@@ -26,7 +28,8 @@ export type Page = {
 };
 
 type State = { ready: boolean; user: User | null; pages: Page[] };
-type Saved = { profile: Pick<User, "nickname" | "avatarUrl">; pages: Page[] };
+// intro is optional: data saved before the introduction field has no such key.
+type Saved = { profile: Pick<User, "nickname" | "avatarUrl"> & { intro?: string }; pages: Page[] };
 
 const KEY_PREFIX = "mini-notion:v2:";
 const SERVER_STATE: State = { ready: false, user: null, pages: [] };
@@ -55,7 +58,7 @@ function commit(next: Omit<State, "ready">) {
   state = { ...state, ...next };
   if (next.user) {
     const saved: Saved = {
-      profile: { nickname: next.user.nickname, avatarUrl: next.user.avatarUrl },
+      profile: { nickname: next.user.nickname, avatarUrl: next.user.avatarUrl, intro: next.user.intro },
       pages: next.pages,
     };
     try {
@@ -73,8 +76,8 @@ function displayNameOf(au: Session["user"]) {
   return String(meta.display_name || meta.full_name || meta.name || au.email?.split("@")[0] || "").slice(0, 20);
 }
 
-type ProfileRow = { name: string | null; avatar_url: string | null };
-const PROFILE_COLUMNS = "name, avatar_url";
+type ProfileRow = { name: string | null; avatar_url: string | null; introduction: string | null };
+const PROFILE_COLUMNS = "name, avatar_url, introduction";
 
 // Returns the user's 1:1 profile row. The DB trigger creates it on first
 // sign-in with name = display name; if it is somehow missing, create it here.
@@ -119,6 +122,8 @@ async function applySession(session: Session | null) {
       email: au.email ?? "",
       nickname: profile?.name || saved?.profile.nickname || googleName,
       avatarUrl: profile?.avatar_url || saved?.profile.avatarUrl || meta.avatar_url || meta.picture || null,
+      // An empty introduction in the row is a real value, so only fall back when the row is missing.
+      intro: (profile ? profile.introduction : saved?.profile.intro) ?? "",
       createdAt: Date.parse(au.created_at) || now,
     },
     pages: saved?.pages ?? seedPages(now),
@@ -215,7 +220,12 @@ async function saveProfile(patch: Partial<ProfileRow>): Promise<{ error: string 
   if (error || !data) return { error: error?.message ?? "profile row not found" };
   if (state.user?.id !== user.id) return { error: null }; // signed out meanwhile
   commit({
-    user: { ...state.user, nickname: data.name || state.user.nickname, avatarUrl: data.avatar_url || state.user.avatarUrl },
+    user: {
+      ...state.user,
+      nickname: data.name || state.user.nickname,
+      avatarUrl: data.avatar_url || state.user.avatarUrl,
+      intro: data.introduction ?? "",
+    },
     pages: state.pages,
   });
   return { error: null };
@@ -224,6 +234,11 @@ async function saveProfile(patch: Partial<ProfileRow>): Promise<{ error: string 
 // F-05
 export function saveNickname(nickname: string) {
   return saveProfile({ name: nickname });
+}
+
+// Self-introduction. An empty string clears it (stored as null).
+export function saveIntro(intro: string) {
+  return saveProfile({ introduction: intro || null });
 }
 
 // F-06: the file goes to Storage at avatars/<user id>/avatar (overwritten on

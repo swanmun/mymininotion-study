@@ -264,6 +264,41 @@ export function deletePage(id: string) {
   commit({ user: s.user, pages: s.pages.filter((p) => p.id !== id) });
 }
 
+// F-12: light / dark workspace. A per-browser preference, so it lives under its
+// own key rather than in an account's saved data.
+export type Theme = "light" | "dark";
+
+const THEME_KEY = "mini-notion:theme";
+let theme: Theme | null = null;
+const themeListeners = new Set<() => void>();
+
+function readTheme(): Theme {
+  try {
+    return localStorage.getItem(THEME_KEY) === "dark" ? "dark" : "light";
+  } catch {
+    return "light";
+  }
+}
+
+function subscribeTheme(listener: () => void) {
+  themeListeners.add(listener);
+  return () => themeListeners.delete(listener);
+}
+
+export function useTheme(): Theme {
+  return useSyncExternalStore(subscribeTheme, () => (theme ??= readTheme()), () => "light");
+}
+
+export function setTheme(next: Theme) {
+  theme = next;
+  try {
+    localStorage.setItem(THEME_KEY, next);
+  } catch {
+    // Storage blocked — the choice still holds for this visit.
+  }
+  themeListeners.forEach((l) => l());
+}
+
 // F-08: most recently edited first.
 export function sortPages(pages: Page[]) {
   return [...pages].sort((a, b) => b.updatedAt - a.updatedAt);

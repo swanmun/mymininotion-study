@@ -56,6 +56,36 @@
 | `--fg-inverse` / `--fg-inverse-2` | white / #bdbdbd | 어두운 바탕 위 글자 |
 | `--titlebar-bg` / `--titlebar-fg` | ink-900 / white | 창 제목 막대 |
 | `--link` / `--link-hover` | ink-900 / cocoa-600 | 링크 |
+| `--surface-side` | sage-200 | 작업형 사이드바 |
+| `--surface-muted` | gray-200 | 커버 자리, 스켈레톤 바탕 |
+| `--surface-strong` / `--surface-strong-hover` / `--fg-on-strong` | ink-900 / cocoa-800 / white | 반전 면: 선택된 행, solid 버튼, `Tag ink`, 명령어 항목, `kbd`, `::selection` |
+| `--surface-scrim` | ink-900 20% (`color-mix`) | 확인 창 뒤 가림막 |
+| `--fg-placeholder` | gray-400 | 입력칸 placeholder |
+| `--line` | ink-900 | 1px 선·테두리 (창, 입력칸, window 버튼, 아바타, 구역 나눔선) |
+
+작업형 화면과 `ds` 컴포넌트는 `--ink-900` / `--white`를 직접 쓰지 않고 위 의미 토큰을 씁니다. 그래야 다크 모드에서 함께 바뀝니다. (포스터형 전용 요소 — chip 버튼, `Tag paper/accent`, G 로고 — 는 원색 토큰 그대로입니다.)
+
+### 다크 모드 (`[data-theme="dark"]`, F-12)
+
+화면 뿌리 요소에 `data-theme="dark"`를 달면 그 안의 의미 토큰만 아래 값으로 바뀝니다. 지금은 업무 페이지(`.ws`)에만 씁니다. 새 hex 없이 팔레트 토큰만 씁니다.
+
+| 토큰 | 다크 값 |
+|---|---|
+| `--surface-page` | ink-900 |
+| `--surface-side` · `--surface-muted` · `--surface-window` | cocoa-800 |
+| `--surface-window-inner` | ink-900 |
+| `--surface-strong` / `--surface-strong-hover` / `--fg-on-strong` | gray-100 / white / ink-900 |
+| `--surface-scrim` | ink-900 60% |
+| `--fg-1` / `--fg-2` / `--fg-placeholder` | gray-100 / gray-300 / gray-400 |
+| `--line` | gray-100 |
+| `--titlebar-bg` / `--titlebar-fg` | gray-100 / ink-900 |
+| `--link` / `--link-hover` | gray-100 / gray-300 |
+| `--bevel-out` | 밝은 면 cocoa-600, 어두운 면 ink-900 |
+| `--bevel-in` | 밝은 면 ink-900, 어두운 면 cocoa-600 |
+
+- 선택은 사이드바 프로필 줄의 "다크 모드" 버튼(window, sm, `aria-pressed`)으로 바꾸고, 브라우저에 저장됩니다 (`lib/store.ts`의 `useTheme` / `setTheme`).
+- 포스터형 화면(로그인, 마이 페이지)은 다크 모드여도 원래 배경색을 유지합니다.
+- 다크에서는 `--gray-400`이 ink-900 위 placeholder로 쓰입니다 (대비 약 6:1).
 
 ### 화면별 배경 규칙
 
@@ -64,6 +94,7 @@
 | 포스터형 — 입구 (로그인) | `--pink-500` + 마젠타 도트 | `--cocoa-800` |
 | 포스터형 — 설정 (마이 페이지) | `--sage-400` | `--cocoa-800` |
 | 작업형 (업무 페이지) | 본문 white, 사이드바 `--sage-200` | `--ink-900` |
+| 작업형 — 다크 모드 | 본문 `--ink-900`, 사이드바 `--cocoa-800` | `--gray-100` |
 
 새 포스터형 화면은 한 화면에 **배경색 하나**만 씁니다. 예비 토큰(`--sky-100` 등)을 쓸 때도 마찬가지입니다.
 
@@ -158,6 +189,7 @@
 | `lg` | 18px | 36px |
 
 상태: hover(위 표), active(chip·solid는 1px 아래로, window는 베벨 반전), disabled(opacity 0.4, `not-allowed`).
+켜고 끄는 버튼은 window variant에 `aria-pressed`를 줍니다. 켜진 동안 오목 베벨로 눌린 채 보이고, 글자 앞에 `■`(켜짐) / `□`(꺼짐)를 `aria-hidden`으로 붙입니다 ("□ 다크 모드").
 `href`를 주면 Next.js `Link`로 그려집니다.
 
 ```tsx
@@ -228,7 +260,7 @@
 
 ```
 ┌ 사이드바 300px (sage-200) ┬ 상단 바: 경로 ······ Tag 시간 [삭제] ┐
-│ 프로필 (아바타·별명·설정)    │                                      │
+│ 프로필 (아바타·별명·다크 모드·설정) │                               │
 │ 내 글 ··········· 03      │   64px 제목                           │
 │ 글 목록 (선택 = 잉크 반전)  │   ───────────                         │
 │ ─────────                │   19px 본문                           │
@@ -241,6 +273,7 @@
 - 글자 수는 본문 입력칸 바로 아래 `.ws-count num`: 12px 메타, 자간 0, `--fg-2`. 문구는 `글자 수 1,234 · 공백 제외 1,000` (세 자리 쉼표, 가운뎃점 구분).
 - 빈 상태·없는 글은 `.ws-blank`: 64px 제목 + 19px 설명 + 필요하면 window 버튼 하나.
 - 확인 창: `.scrim` + `Window`(400px) + 오른쪽 정렬 [취소(window, autoFocus)] [실행(solid)].
+- 다크 모드: `.ws`에 `data-theme`를 달고, 색은 2절 "다크 모드" 토큰으로만 바꿉니다.
 
 ---
 
@@ -283,6 +316,7 @@
 - **대비:** 본문은 `--ink-900`/`--cocoa-800`을 밝은 바탕 위에 씁니다. `--fg-2`(#4a4a4a)는 흰·세이지 바탕에서 보조 글자로만. `--gray-400`은 placeholder 전용 (대비가 낮아 본문에 쓰지 않음).
 - **포커스:** 입력칸은 테두리 2px로 표시합니다. 버튼·링크도 키보드 포커스가 보여야 합니다 (정리 필요 참고).
 - **키보드:** Enter로 실행 (`/page`, 제목 → 본문 이동, 폼 저장), Escape로 닫기 (명령어 팝업, 삭제 확인). 확인 창은 `role="dialog" aria-modal="true"`, 안전한 버튼(취소)에 `autoFocus`.
+- **토글:** 켜고 끄는 버튼은 이름을 고정하고("다크 모드") 상태는 `aria-pressed`로 알립니다.
 - **장식:** 아바타처럼 의미 없는 그림은 `aria-hidden="true"`. 문서 언어는 `lang="ko"`.
 - **선택 영역:** `::selection`은 잉크 바탕 흰 글자.
 
@@ -320,7 +354,7 @@
 
 1. `--signal-rust` 토큰이 `:root`에 없습니다. `.me-err`가 fallback `#a8452e`로 그려지고 있습니다 → 에러 색 토큰을 정식으로 추가해야 합니다.
 2. `--fg-2` #4a4a4a, `--fg-inverse-2` #bdbdbd는 팔레트 토큰이 아닌 hex 값입니다.
-3. `rgba(30, 30, 30, 0.08)`(`.ws-row:hover`), `rgba(30, 30, 30, 0.2)`(`.scrim`)가 하드코딩되어 있습니다 (ink-900의 투명도 버전).
+3. ~~`rgba(30, 30, 30, 0.08)`(`.ws-row:hover`), `rgba(30, 30, 30, 0.2)`(`.scrim`) 하드코딩~~ → 다크 모드 작업에서 `color-mix(… var(--fg-1) 8% …)`, `--surface-scrim`으로 바꿨습니다.
 4. 창 제목·설명 스타일이 인라인으로 반복됩니다: `fontSize 28/24, fontWeight 600, letterSpacing -0.04em`(login, 삭제 확인), `fontSize 14, lineHeight 1.4, color var(--fg-2)`(login, 삭제 확인), `fontSize 11, fontWeight 600`(마이 페이지 이메일 라벨 = `.field-label`과 비슷) → 클래스로 옮길 후보입니다.
 5. `.btn`, `.ws-row`, 링크에 `:focus-visible` 스타일이 없습니다. 브라우저 기본 외곽선에 의존합니다.
 6. 말줄임 표기가 섞여 있습니다: "저장 중…"(…) vs "여기에 내용을 입력하세요..."(...).

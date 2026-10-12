@@ -67,3 +67,23 @@ describe("업무 페이지 다크 모드", () => {
     expect(workspaceOf(toggle)).toHaveAttribute("data-theme", "dark");
   });
 });
+
+describe("사이드바 접기/펼치기", () => {
+  it("버튼을 누르면 접히고, 다시 누르면 펼쳐진다", async () => {
+    const user = userEvent.setup();
+    await renderWorkspace();
+    expect(screen.getByPlaceholderText("/page 입력 후 Enter")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "사이드바 접기" }));
+    expect(screen.queryByPlaceholderText("/page 입력 후 Enter")).not.toBeInTheDocument();
+    expect(screen.queryByText("테스터")).not.toBeInTheDocument();
+    const expand = screen.getByRole("button", { name: "사이드바 펼치기" });
+    expect(expand).toHaveAttribute("aria-expanded", "false");
+    expect(expand).toHaveFocus();
+    expect(screen.getByText("본문")).toBeInTheDocument();
+
+    await user.click(expand);
+    expect(screen.getByPlaceholderText("/page 입력 후 Enter")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "사이드바 접기" })).toHaveAttribute("aria-expanded", "true");
+  });
+});

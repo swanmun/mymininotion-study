@@ -6,13 +6,14 @@ import { useEffect, useState, type ReactNode } from "react";
 import Avatar from "@/components/Avatar";
 import RequireAuth from "@/components/RequireAuth";
 import { Button, Input, Window } from "@/components/ds";
-import { createPage, displayTitle, shortTime, sortPages, useStore } from "@/lib/store";
+import { createPage, displayTitle, setTheme, shortTime, sortPages, useStore, useTheme } from "@/lib/store";
 
 // 1b / 1c · 업무 페이지 — 사이드바(글 목록 + /page 명령) 공통 레이아웃
 export default function WorkspaceLayout({ children }: { children: ReactNode }) {
+  const theme = useTheme();
   return (
     <RequireAuth>
-      <div className="ws">
+      <div className="ws" data-theme={theme}>
         <Sidebar />
         <main className="ws-main">{children}</main>
       </div>
@@ -22,6 +23,7 @@ export default function WorkspaceLayout({ children }: { children: ReactNode }) {
 
 function Sidebar() {
   const { user, pages, pagesError } = useStore();
+  const theme = useTheme();
   const { id: activeId } = useParams<{ id?: string }>();
   const router = useRouter();
   const [cmd, setCmd] = useState("");
@@ -61,6 +63,15 @@ function Sidebar() {
             마이 페이지 →
           </Link>
         </div>
+        <Button
+          variant="window"
+          size="sm"
+          aria-pressed={theme === "dark"}
+          onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+        >
+          <span aria-hidden="true">{theme === "dark" ? "■" : "□"}</span>
+          다크 모드
+        </Button>
         <Button variant="window" size="sm" href="/me">
           설정
         </Button>

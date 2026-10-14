@@ -76,8 +76,18 @@ function displayNameOf(au: Session["user"]) {
   return String(meta.display_name || meta.full_name || meta.name || au.email?.split("@")[0] || "").slice(0, 20);
 }
 
-type ProfileRow = { name: string | null; avatar_url: string | null; introduction: string | null };
-const PROFILE_COLUMNS = "name, avatar_url, introduction";
+type ProfileRow = { name: string | null; avatar_url: string | null; introduction: string | null; image_path: string | null };
+const PROFILE_COLUMNS = "name, avatar_url, introduction, image_path";
+
+// Profile images live in the public profile-image bucket. The row keeps only the
+// path after the bucket name; the part before it comes from the environment.
+const PROFILE_IMAGE_BUCKET = "profile-image";
+const profileImageBase = () => process.env.NEXT_PUBLIC_PROFILE_IMAGE_BASE_URL?.replace(/\/+$/, "") || null;
+
+function profileImageUrl(path: string | null | undefined): string | null {
+  const base = profileImageBase();
+  return base && path ? `${base}/${path}` : null;
+}
 
 // Returns the user's 1:1 profile row. The DB trigger creates it on first
 // sign-in with name = display name; if it is somehow missing, create it here.
@@ -139,7 +149,13 @@ async function applySession(session: Session | null) {
       id: au.id,
       email: au.email ?? "",
       nickname: profile?.name || saved?.profile.nickname || googleName,
-      avatarUrl: profile?.avatar_url || saved?.profile.avatarUrl || meta.avatar_url || meta.picture || null,
+      avatarUrl:
+        profileImageUrl(profile?.image_path) ||
+        profile?.avatar_url ||
+        saved?.profile.avatarUrl ||
+        meta.avatar_url ||
+        meta.picture ||
+        null,
       // An empty introduction in the row is a real value, so only fall back when the row is missing.
       intro: (profile ? profile.introduction : saved?.profile.intro) ?? "",
       createdAt: Date.parse(au.created_at) || Date.now(),
@@ -224,7 +240,7 @@ async function saveProfile(patch: Partial<ProfileRow>): Promise<{ error: string 
     user: {
       ...state.user,
       nickname: data.name || state.user.nickname,
-      avatarUrl: data.avatar_url || state.user.avatarUrl,
+      avatarUrl: profileImageUrl(data.image_path) || data.avatar_url || state.user.avatarUrl,
       intro: data.introduction ?? "",
     },
   });
@@ -241,18 +257,25 @@ export function saveIntro(intro: string) {
   return saveProfile({ introduction: intro || null });
 }
 
-// F-06: the file goes to Storage at avatars/<user id>/avatar (overwritten on
-// each change); the public URL, with a version to bust caches, goes to profile.
+const IMAGE_EXT: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
+
+// F-06: the file goes to profile-image/<uuid v4>.<ext>, a new name on every
+// change, and that path goes to profile.image_path. The previous file is then
+// removed; if the row cannot be updated, the new file is removed instead.
 export async function saveAvatar(file: File): Promise<{ error: string | null }> {
   const user = state.user;
   const supabase = getSupabase();
   if (!user || !supabase) return { error: "로그인 설정이 없습니다." };
-  const bucket = supabase.storage.from("avatars");
-  const path = `${user.id}/avatar`;
-  const { error } = await bucket.upload(path, file, { upsert: true, contentType: file.type, cacheControl: "3600" });
+  if (!profileImageBase()) return { error: "이미지 주소 설정이 없습니다." };
+  const bucket = supabase.storage.from(PROFILE_IMAGE_BUCKET);
+  const { data: before } = await supabase.from("profile").select("image_path").eq("user_id", user.id).maybeSingle();
+  const path = `${crypto.randomUUID()}.${IMAGE_EXT[file.type] ?? "img"}`;
+  const { error } = await bucket.upload(path, file, { contentType: file.type, cacheControl: "31536000" });
   if (error) return { error: error.message };
-  const { publicUrl } = bucket.getPublicUrl(path).data;
-  return saveProfile({ avatar_url: `${publicUrl}?v=${Date.now()}` });
+  const saved = await saveProfile({ image_path: path });
+  const stale = saved.error ? path : before?.image_path;
+  if (stale) await bucket.remove([stale]);
+  return saved;
 }
 
 type Result<T = null> = { data: T | null; error: string | null };

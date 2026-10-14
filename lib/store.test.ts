@@ -1,5 +1,5 @@
 import { renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createFakeSupabase, TEST_USER_ID } from "@/lib/testing/fakeSupabase";
 
 // 글은 Supabase page 테이블에 저장된다. getSupabase를 메모리 DB로 바꿔 store의 공개 API만 쓴다.
@@ -71,5 +71,70 @@ describe("글 저장 (Supabase page 테이블)", () => {
     expect((await store.deletePage("theirs")).error).not.toBeNull();
     expect((await store.updatePage("theirs", { title: "바꿈" })).error).not.toBeNull();
     expect(mockDb.tables.page).toEqual([expect.objectContaining({ id: "theirs", title: "남의 글" })]);
+  });
+});
+
+// 이미지 주소 = 환경 변수(스토리지 주소 ~ 버킷명) + "/" + profile.image_path(버킷명 이후).
+describe("프로필 이미지 (Supabase Storage profile-image 버킷)", () => {
+  const BASE = "https://proj.supabase.co/storage/v1/object/public/profile-image";
+  const UUID_PNG = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.png$/;
+  const png = (name = "me.png") => new File(["img"], name, { type: "image/png" });
+  const imagePath = () => mockDb.tables.profile[0].image_path as string | null;
+  const stored = () => [...(mockDb.buckets["profile-image"]?.keys() ?? [])];
+
+  beforeEach(() => vi.stubEnv("NEXT_PUBLIC_PROFILE_IMAGE_BASE_URL", BASE));
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("올린 사진은 profile-image 버킷에 uuidv4 파일명으로 저장되고, 버킷명 이후 경로만 image_path에 남는다", async () => {
+    const { store, state } = await signedInStore();
+    expect(await store.saveAvatar(png())).toEqual({ error: null });
+
+    expect(imagePath()).toMatch(UUID_PNG);
+    expect(stored()).toEqual([imagePath()]);
+    expect(mockDb.buckets["profile-image"].get(imagePath()!)!.name).toBe("me.png");
+    expect(state().user!.avatarUrl).toBe(`${BASE}/${imagePath()}`);
+  });
+
+  it("다시 로그인하면 image_path와 환경 변수로 이미지 주소를 만든다", async () => {
+    mockDb.tables.profile[0].image_path = "11111111-1111-4111-8111-111111111111.webp";
+    const { state } = await signedInStore();
+    expect(state().user!.avatarUrl).toBe(`${BASE}/11111111-1111-4111-8111-111111111111.webp`);
+  });
+
+  it("사진을 바꾸면 새 uuid 파일로 저장되고 이전 파일은 버킷에서 지워진다", async () => {
+    const { store, state } = await signedInStore();
+    await store.saveAvatar(png("first.png"));
+    const first = imagePath();
+
+    expect(await store.saveAvatar(png("second.png"))).toEqual({ error: null });
+    expect(imagePath()).toMatch(UUID_PNG);
+    expect(imagePath()).not.toBe(first);
+    expect(stored()).toEqual([imagePath()]);
+    expect(state().user!.avatarUrl).toBe(`${BASE}/${imagePath()}`);
+  });
+
+  it("업로드가 실패하면 에러를 돌려주고 image_path와 이미지는 그대로다", async () => {
+    mockDb.tables.profile[0].image_path = "11111111-1111-4111-8111-111111111111.webp";
+    const { store, state } = await signedInStore();
+    mockDb.storageControl.failUploads = true;
+
+    expect((await store.saveAvatar(png())).error).not.toBeNull();
+    expect(imagePath()).toBe("11111111-1111-4111-8111-111111111111.webp");
+    expect(state().user!.avatarUrl).toBe(`${BASE}/11111111-1111-4111-8111-111111111111.webp`);
+  });
+
+  it("profile 행을 고치지 못하면 방금 올린 파일을 지워 버킷에 남기지 않는다", async () => {
+    const { store } = await signedInStore();
+    mockDb.tables.profile.length = 0;
+    expect((await store.saveAvatar(png())).error).not.toBeNull();
+    expect(stored()).toEqual([]);
+  });
+
+  it("이미지 주소 환경 변수가 없으면 올리지 않고 에러를 돌려준다", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PROFILE_IMAGE_BASE_URL", "");
+    const { store } = await signedInStore();
+    expect((await store.saveAvatar(png())).error).not.toBeNull();
+    expect(stored()).toEqual([]);
+    expect(imagePath()).toBeNull();
   });
 });

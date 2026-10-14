@@ -1,6 +1,6 @@
 // 테스트 전용: lib/supabase의 getSupabase를 대신하는 메모리 DB.
 // store가 쓰는 만큼만 흉내 낸다 — from().select/insert/update/delete + eq/order/single/maybeSingle,
-// auth.onAuthStateChange(즉시 로그인 세션 전달)·signOut.
+// storage.from(버킷).upload/remove, auth.onAuthStateChange(즉시 로그인 세션 전달)·signOut.
 // RLS는 흉내 내지 않는다. 본인 글만 다루는지는 store가 거는 user_id 조건으로 확인한다.
 
 type Row = Record<string, unknown>;
@@ -8,7 +8,10 @@ type Row = Record<string, unknown>;
 export const TEST_USER_ID = "00000000-0000-4000-8000-000000000001";
 
 export function createFakeSupabase(userId = TEST_USER_ID) {
-  const tables: Record<string, Row[]> = { page: [], profile: [{ user_id: userId, name: "테스터", avatar_url: null }] };
+  const tables: Record<string, Row[]> = { page: [], profile: [{ user_id: userId, name: "테스터", avatar_url: null, image_path: null }] };
+  // 버킷 이름 → (버킷 안 경로 → 올린 파일). failUploads를 켜면 업로드가 실패한다.
+  const buckets: Record<string, Map<string, File>> = {};
+  const storageControl = { failUploads: false };
   let seq = 0;
 
   function from(table: string) {
@@ -63,8 +66,25 @@ export function createFakeSupabase(userId = TEST_USER_ID) {
   }
 
   const session = { user: { id: userId, email: "tester@example.com", created_at: new Date().toISOString(), user_metadata: {} } };
+  function bucket(name: string) {
+    const files = (buckets[name] ??= new Map());
+    return {
+      upload: async (path: string, file: File, opts?: { upsert?: boolean }) => {
+        if (storageControl.failUploads) return { data: null, error: { message: "upload failed" } };
+        if (files.has(path) && !opts?.upsert) return { data: null, error: { message: "The resource already exists" } };
+        files.set(path, file);
+        return { data: { path }, error: null };
+      },
+      remove: async (paths: string[]) => {
+        paths.forEach((p) => files.delete(p));
+        return { data: [], error: null };
+      },
+    };
+  }
+
   const client = {
     from,
+    storage: { from: bucket },
     auth: {
       onAuthStateChange: (cb: (event: string, s: typeof session) => void) => {
         cb("INITIAL_SESSION", session);
@@ -73,5 +93,5 @@ export function createFakeSupabase(userId = TEST_USER_ID) {
       signOut: async () => ({ error: null }),
     },
   };
-  return { client, tables };
+  return { client, tables, buckets, storageControl };
 }
